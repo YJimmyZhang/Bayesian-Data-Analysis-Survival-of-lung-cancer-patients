@@ -1,0 +1,25 @@
+
+model {
+  for (i in 1:N) {
+    time[i] ~ dweib(k, lambda[i])
+    log(lambda[i]) <- -eta[i]
+    eta[i] <- beta0
+            + beta_trt       * trt[i]
+            + beta_karno     * karno[i]
+            + beta_smallcell * smallcell[i]
+            + beta_adeno     * adeno[i]
+            + beta_large     * large[i]
+  }
+
+  # Vague priors on regression coefficients
+  beta0          ~ dnorm(0, 0.0001)
+  beta_trt       ~ dnorm(0, 0.0001)
+  beta_karno     ~ dnorm(0, 0.0001)
+  beta_smallcell ~ dnorm(0, 0.0001)
+  beta_adeno     ~ dnorm(0, 0.0001)
+  beta_large     ~ dnorm(0, 0.0001)
+
+  # Vague prior on the Weibull shape (k > 0)
+  k ~ dgamma(0.01, 0.01)
+}
+
