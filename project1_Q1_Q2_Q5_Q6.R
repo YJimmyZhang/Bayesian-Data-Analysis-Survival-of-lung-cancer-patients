@@ -1,14 +1,16 @@
-# Project 1 - Bayesian Weibull regression on the Veteran lung cancer data
-# Questions 1 and 2
-
+## Project 1 - Bayesian Weibull regression on the Veteran lung cancer data
 
 library(survival)   # contains the 'veteran' dataset
 library(rjags)      # interface to JAGS
 library(coda)       # MCMC diagnostics
+library(ggplot2)    # GGplot visualization
+library(tidyr)
 
 set.seed(20260518)
 
 data(cancer, package = "survival")
+
+## Questions 1 and 2
 
 # Use only patients with observed event (status == 1), as instructed
 vet <- veteran[veteran$status == 1, ]
@@ -117,7 +119,8 @@ samples <- coda.samples(jmod,
 summary(samples)
 
 # 1. Trace and density plots
-#+ fig.width=12, fig.height=10
+fig.width=12
+fig.height=10
 plot(samples)
 
 # 2. Gelman-Rubin (potential scale reduction factor)
@@ -140,4 +143,89 @@ heidel.diag(samples)
 
 # If high autocorrelation / low ESS:
 #   - increase n.iter and/or n.thin (e.g. thin = 5 or 10),
-#   - or re-parameterise / centre covariates (karno could be centred to help mixing).
+#   - or re-parameter / centre covariates (karno could be centred to help mixing).
+
+## --------------------------------------------------------------------------------------
+## QUESTIONS 5 and 6
+## --------------------------------------------------------------------------------------
+
+## Question 5
+samples.mat <- as.matrix(samples)
+
+## Extract parameters from the matrix
+b0   <- samples.mat[, "beta0"]
+b_trt <- samples.mat[, "beta_trt"]
+b_sc <- samples.mat[, "beta_smallcell"]
+b_ad <- samples.mat[, "beta_adeno"]
+b_lg <- samples.mat[, "beta_large"]
+k    <- samples.mat[, "k"]
+
+## Calculate eta for each profile
+eta_squamous <- b0
+eta_small    <- b0 + b_sc
+eta_adeno    <- b0 + b_ad
+eta_large    <- b0 + b_lg
+
+## Compute posterior samples for median survival times
+median_squamous <- (log(2) * exp(eta_squamous))^(1 / k)
+median_small    <- (log(2) * exp(eta_small))^(1 / k)
+median_adeno    <- (log(2) * exp(eta_adeno))^(1 / k)
+median_large    <- (log(2) * exp(eta_large))^(1 / k)
+
+## Combine into a data frame
+medians_df <- data.frame(
+  Squamous  = median_squamous,
+  SmallCell = median_small,
+  Adeno     = median_adeno,
+  Large     = median_large
+)
+
+## Posterior Summaries Table (Point and Interval Estimates)
+median_summary <- t(apply(medians_df, 2, function(x) {
+  c(mean = mean(x), sd = sd(x), median = median(x),
+    q2.5 = unname(quantile(x, 0.025)), q97.5 = unname(quantile(x, 0.975)))
+}))
+
+print(round(median_summary, 3))
+
+## Visualization via Caterpillar Plot
+plot_data <- as.data.frame(median_summary)
+plot_data$CellType <- rownames(plot_data)
+
+ggplot(plot_data, aes(x = CellType, y = median)) +
+  geom_point(size = 4, color = "darkblue") +
+  geom_errorbar(aes(ymin = q2.5, ymax = q97.5), width = 0.2, size = 1, color = "red") +
+  coord_flip() +
+  labs(title = "Posterior Median Survival Times (with 95% Credible Intervals)",
+       subtitle = "Profile: Treatment 1, Average Karnofsky Score",
+       x = "Tumor Cell Type", y = "Median Survival (Days)") + theme_minimal()
+
+## Question 6
+t_val <- 60
+
+## Profile A: Trt 1, Avg Karno, Squamous
+lambda_A <- exp(-b0)
+SA_60   <- exp(-lambda_A * (t_val^k))
+
+## Profile B: Trt 2, Avg Karno, Squamous
+lambda_B <- exp(-(b0 + b_trt))
+SB_60   <- exp(-lambda_B * (t_val^k))
+
+# Combine and compute summaries
+S60_df <- data.frame(Profile_A = SA_60, Profile_B = SB_60)
+S60_summary <- t(apply(S60_df, 2, function(x) {
+  c(mean = mean(x), sd = sd(x), median = median(x),
+    q2.5 = unname(quantile(x, 0.025)), q97.5 = unname(quantile(x, 0.975)))
+}))
+
+print(round(S60_summary, 3))
+
+## Posterior Density Plots
+S60_long <- gather(S60_df, key = "Profile", value = "Probability")
+
+ggplot(S60_long, aes(x = Probability, fill = Profile)) +
+  geom_density(alpha = 0.5) +
+  scale_fill_manual(values = c("Profile_A" = "red", "Profile_B" = "green"),
+                    labels = c("Profile A", "Profile B")) +
+  labs(title = "Posterior Density of Survival Probability at t = 60 Days",
+       x = "Survival Probability S(60)", y = "Density", fill = "Patient Profile") + theme_minimal()
