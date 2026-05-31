@@ -5,6 +5,7 @@ library(rjags)      # interface to JAGS
 library(coda)       # MCMC diagnostics
 library(ggplot2)    # GGplot visualization
 library(tidyr)
+library(readr)
 
 set.seed(20260518)
 
@@ -75,6 +76,7 @@ model {
 "
 
 writeLines(model_string, "weibull_model.txt")
+file.show("weibull_model.txt")
 
 # --- MCMC settings ------------------------------------------------------------
 # Three independent chains with overdispersed starting values, so that the
@@ -110,7 +112,7 @@ update(jmod, n.iter = n.burn)
 # Sampling
 samples <- coda.samples(jmod,
                         variable.names = params,
-                        n.iter = n.iter,
+                        n.iter = n.iter, #per chain
                         thin   = n.thin)
 
 # --- Convergence diagnostics --------------------------------------------------
@@ -119,9 +121,9 @@ samples <- coda.samples(jmod,
 summary(samples)
 
 # 1. Trace and density plots
-fig.width=12
-fig.height=10
-plot(samples)
+#fig.width=12
+#fig.height=10
+#plot(samples)
 
 # 2. Gelman-Rubin (potential scale reduction factor)
 #    Rule of thumb: point estimate and upper CI < 1.1 (ideally < 1.05) -> converged
@@ -229,3 +231,89 @@ ggplot(S60_long, aes(x = Probability, fill = Profile)) +
                     labels = c("Profile A", "Profile B")) +
   labs(title = "Posterior Density of Survival Probability at t = 60 Days",
        x = "Survival Probability S(60)", y = "Density", fill = "Patient Profile") + theme_minimal()
+
+
+## --------------------------------------------------------------------------------------
+## QUESTIONS 7 and 8
+## --------------------------------------------------------------------------------------
+
+model_string2 <- "
+model {
+  for (i in 1:N) {
+    time[i] ~ dweib(k, lambda[i])
+    log(lambda[i]) <- -eta[i]
+    eta[i] <- beta0
+            + beta_trt       * trt[i]
+            + beta_karno     * karno[i]
+            + beta_smallcell * smallcell[i]
+            + beta_adeno     * adeno[i]
+            + beta_large     * large[i]
+  }
+
+  beta0          ~ dnorm(0, 0.0001)
+  beta_trt       ~ dnorm(0, 0.0001)
+  beta_karno     ~ dnorm(0, 0.0001)
+  beta_smallcell ~ dnorm(0, 0.0001)
+  beta_adeno     ~ dnorm(0, 0.0001)
+  beta_large     ~ dnorm(0, 0.0001)
+  k              ~ dgamma(0.01, 0.01)
+
+  lambda_A <- exp(-beta0)
+  lambda_B <- exp(-(beta0 + beta_trt))
+  SA_60 <- exp(-lambda_A * pow(60, k))
+  SB_60 <- exp(-lambda_B * pow(60, k))
+  
+  #Q7 derived variable
+  prob_A_better_B <- step(SA_60 - SB_60)
+
+  #Q8 derived variables
+  median_squamous <- pow(log(2) * exp(beta0), 1/k)
+  median_small    <- pow(log(2) * exp(beta0 + beta_smallcell), 1/k)
+  median_adeno    <- pow(log(2) * exp(beta0 + beta_adeno), 1/k)
+  median_large    <- pow(log(2) * exp(beta0 + beta_large), 1/k)
+  prob_med_sq_100 <- step(median_squamous - 100)
+  prob_med_sc_100 <- step(median_small - 100)
+  prob_med_ad_100 <- step(median_adeno - 100)
+  prob_med_lg_100 <- step(median_large - 100)
+}
+"
+
+writeLines(model_string2, "weibull_model2.txt")
+file.show("weibull_model2.txt")
+
+params2 <- c("beta0", "beta_trt", "beta_karno",
+            "beta_smallcell", "beta_adeno", "beta_large", "k",
+            "prob_A_better_B", 
+            "prob_med_sq_100", "prob_med_sc_100", "prob_med_ad_100", "prob_med_lg_100")
+
+jmod2 <- jags.model("weibull_model2.txt",
+                   data    = jags_data,
+                   inits   = inits,
+                   n.chains = n.chains,
+                   n.adapt  = n.adapt)
+
+update(jmod2, n.iter = n.burn)
+
+samples <- coda.samples(jmod2,
+                        variable.names = params2,
+                        n.iter = n.iter,
+                        thin   = n.thin)
+
+summary_stats <- summary(samples)$statistics
+summary_stats
+
+# Q7 result:
+cat("Question 7: P(SA(60) > SB(60) | data) =", 
+    round(summary_stats["prob_A_better_B", "Mean"], 4))
+
+# Q8 results:
+prob_squamous_100 <- round(summary_stats["prob_med_sq_100", "Mean"], 4)
+prob_small_100    <- round(summary_stats["prob_med_sc_100", "Mean"], 4)
+prob_adeno_100    <- round(summary_stats["prob_med_ad_100", "Mean"], 4)
+prob_large_100    <- round(summary_stats["prob_med_lg_100", "Mean"], 4)
+
+prob_100_df <- data.frame(
+  Cell_Type = c("Squamous", "Small Cell", "Adeno", "Large"),
+  Prob_Exceeds_100 = c(prob_squamous_100, prob_small_100, prob_adeno_100, prob_large_100)
+)
+prob_100_df
