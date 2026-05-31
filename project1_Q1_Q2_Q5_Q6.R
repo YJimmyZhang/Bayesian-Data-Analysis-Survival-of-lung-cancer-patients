@@ -229,3 +229,88 @@ ggplot(S60_long, aes(x = Probability, fill = Profile)) +
                     labels = c("Profile A", "Profile B")) +
   labs(title = "Posterior Density of Survival Probability at t = 60 Days",
        x = "Survival Probability S(60)", y = "Density", fill = "Patient Profile") + theme_minimal()
+
+## --------------------------------------------------------------------------------------
+## QUESTIONS 7 and 8
+## --------------------------------------------------------------------------------------
+
+model_string2 <- "
+model {
+  for (i in 1:N) {
+    time[i] ~ dweib(k, lambda[i])
+    log(lambda[i]) <- -eta[i]
+    eta[i] <- beta0
+            + beta_trt       * trt[i]
+            + beta_karno     * karno[i]
+            + beta_smallcell * smallcell[i]
+            + beta_adeno     * adeno[i]
+            + beta_large     * large[i]
+  }
+
+  beta0          ~ dnorm(0, 0.0001)
+  beta_trt       ~ dnorm(0, 0.0001)
+  beta_karno     ~ dnorm(0, 0.0001)
+  beta_smallcell ~ dnorm(0, 0.0001)
+  beta_adeno     ~ dnorm(0, 0.0001)
+  beta_large     ~ dnorm(0, 0.0001)
+  k              ~ dgamma(0.01, 0.01)
+
+  lambda_A <- exp(-beta0)
+  lambda_B <- exp(-(beta0 + beta_trt))
+  SA_60 <- exp(-lambda_A * pow(60, k))
+  SB_60 <- exp(-lambda_B * pow(60, k))
+  
+  #Q7 derived variable
+  prob_A_better_B <- 1 - step(SB_60 - SA_60)
+
+  #Q8 derived variables
+  median_squamous <- pow(log(2) * exp(beta0), 1/k)
+  median_small    <- pow(log(2) * exp(beta0 + beta_smallcell), 1/k)
+  median_adeno    <- pow(log(2) * exp(beta0 + beta_adeno), 1/k)
+  median_large    <- pow(log(2) * exp(beta0 + beta_large), 1/k)
+  prob_med_sq_100 <- 1- step(100 - median_squamous)
+  prob_med_sc_100 <- 1- step(100 - median_small)
+  prob_med_ad_100 <- 1- step(100 - median_adeno)
+  prob_med_lg_100 <- 1- step(100 - median_large)
+}
+"
+
+writeLines(model_string2, "weibull_model2.txt")
+file.show("weibull_model2.txt")
+
+params2 <- c("beta0", "beta_trt", "beta_karno",
+            "beta_smallcell", "beta_adeno", "beta_large", "k",
+            "prob_A_better_B", 
+            "prob_med_sq_100", "prob_med_sc_100", "prob_med_ad_100", "prob_med_lg_100")
+
+jmod2 <- jags.model("weibull_model2.txt",
+                   data    = jags_data,
+                   inits   = inits,
+                   n.chains = n.chains,
+                   n.adapt  = n.adapt)
+
+update(jmod2, n.iter = n.burn)
+
+samples <- coda.samples(jmod2,
+                        variable.names = params2,
+                        n.iter = n.iter,
+                        thin   = n.thin)
+
+summary_stats <- summary(samples)$statistics
+summary_stats
+
+# Q7 result:
+cat("Question 7: P(SA(60) > SB(60) | data) =", 
+    round(summary_stats["prob_A_better_B", "Mean"], 4))
+
+# Q8 results:
+prob_squamous_100 <- round(summary_stats["prob_med_sq_100", "Mean"], 4)
+prob_small_100    <- round(summary_stats["prob_med_sc_100", "Mean"], 4)
+prob_adeno_100    <- round(summary_stats["prob_med_ad_100", "Mean"], 4)
+prob_large_100    <- round(summary_stats["prob_med_lg_100", "Mean"], 4)
+
+prob_100_df <- data.frame(
+  Cell_Type = c("Squamous", "Small Cell", "Adeno", "Large"),
+  Prob_Exceeds_100 = c(prob_squamous_100, prob_small_100, prob_adeno_100, prob_large_100)
+)
+prob_100_df
